@@ -5,6 +5,7 @@ import fedoicmsg
 from fedoicmsg import ClientMetadataStatement
 from fedoicmsg import ProviderConfigurationResponse
 from fedoicmsg.utils import replace_jwks_key_bundle
+from fedoidc import NoTrustedClaims
 
 from oiccli.oic import requests
 from oiccli.oic.requests import ProviderInfoDiscovery
@@ -20,16 +21,24 @@ class FedRegistrationRequest(RegistrationRequest):
 
     def __init__(self, httplib=None, keyjar=None, client_authn_method=None,
                  federation_entity=None, **kwargs):
-        Request.__init__(self, httplib, keyjar, client_authn_method)
+        RegistrationRequest.__init__(self, httplib, keyjar, client_authn_method)
         self.federation_entity = federation_entity
+        # Must be done last
+        self.post_construct.append(self.fedoic_post_construct)
+
+    def fedoic_post_construct(self, cli_info, request_args=None, **kwargs):
+        req_args = self.federated_client_registration_request(cli_info,
+                                                              request_args)
+        return req_args
 
     def federated_client_registration_request(self, cli_info, req_args):
         """
         Constructs a client registration request to be used by a client in a 
         federation.
 
-        :param kwargs: A set of claims that should be part of the registration.
-        :return: A :py:class:`ClientMetadataStatement` 
+        :param cli_info: Client information, a :py:class:`ClientInfo` instance
+        :param req_args: The request arguments
+        :return: A :py:class:`ClientMetadataStatement`
         """
 
         if cli_info.federation:
@@ -38,13 +47,6 @@ class FedRegistrationRequest(RegistrationRequest):
         elif cli_info.provider_federations:
             return self.federation_entity.update_request(
                 req_args, loes=cli_info.provider_federations)
-
-    def pre_construct(self, cli_info, request_args, **kwargs):
-        req_args, post_args = RegistrationRequest.pre_construct(self,
-            cli_info=cli_info, request_args=request_args, **kwargs)
-        req_args = self.federated_client_registration_request(cli_info,
-                                                              req_args)
-        return req_args, post_args
 
     def parse_federation_registration(self, resp, cli_info):
         """
@@ -59,7 +61,7 @@ class FedRegistrationRequest(RegistrationRequest):
         attribute *registration_federations*
 
         :param resp: A MetadataStatement instance or a dictionary
-        :param issuer: Issuer ID
+        :param cli_info: Client info, :py:class:`ClientInfo` instance
         """
         ms_list = self.federation_entity.get_metadata_statement(
             resp, cls=ClientMetadataStatement)
@@ -83,10 +85,14 @@ class FedRegistrationRequest(RegistrationRequest):
 
 
 class FedProviderInfoDiscovery(ProviderInfoDiscovery):
+    response_cls = fedoicmsg.ProviderConfigurationResponse
+
     def __init__(self, httplib=None, keyjar=None, client_authn_method=None,
                  federation_entity=None, **kwargs):
-        Request.__init__(self, httplib, keyjar, client_authn_method)
+        ProviderInfoDiscovery.__init__(self, httplib, keyjar,
+                                       client_authn_method)
         self.federation_entity = federation_entity
+        self.post_parse_response.insert(0, self.fedoic_post_parse_response)
 
     def store_federation_info(self, cli_info, loe):
         """
@@ -94,7 +100,10 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         :param cli_info: ClientInfo instance
         :param loe: LessOrEqual instance
         """
-        _pi = self.response_cls(**loe.protected_claims())
+        trusted_claims = loe.protected_claims()
+        if trusted_claims is None:
+            raise NoTrustedClaims()
+        _pi = self.response_cls(**trusted_claims)
 
         if 'signed_jwks_uri' in _pi:
             _kb = fedoicmsg.KeyBundle(source=_pi['signed_jwks_uri'],
@@ -119,7 +128,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         Client way.
 
         :param resp: A MetadataStatement instance
-        :param issuer: The OpenID Provider ID
+        :param cli_info: Client information, a :py:class:`ClientInfo` instance
         """
 
         les = self.federation_entity.get_metadata_statement(
@@ -144,14 +153,11 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
             raise fedoicmsg.NoSuitableFederation('Available: {}'.format(
                 [l.le for l in les]))
 
-    def _post_parse_response(self, resp, cli_info, **kwargs):
+    def fedoic_post_parse_response(self, resp, cli_info, **kwargs):
         self.parse_federation_provider_info(resp, cli_info)
         if cli_info.provider_info:
             self.match_preferences(cli_info, cli_info.provider_info,
                                    cli_info.issuer)
-            requests.ProviderInfoDiscovery._post_parse_response(
-                self,  cli_info.provider_info, cli_info, **kwargs)
-
 
 
 def factory(req_name, **kwargs):
