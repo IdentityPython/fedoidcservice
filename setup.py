@@ -36,21 +36,19 @@ class PyTest(TestCommand):
         sys.exit(errno)
 
 
-version = ''
-
-with open('src/fedoiccli/__init__.py', 'r') as fd:
+with open('src/fedoidcservice/__init__.py', 'r') as fd:
     version = re.search(r'^__version__\s*=\s*[\'"]([^\'"]*)[\'"]',
                         fd.read(), re.MULTILINE).group(1)
 
 setup(
-    name="fedoiccli",
+    name="fedoidcservice",
     version=version,
     description="Python implementation of the OpenID Connect federation draft",
     author="Roland Hedberg",
     author_email="roland@catalogix.se",
     license="Apache 2.0",
-    url='https://github.com/IdentityPython/fedoiccli',
-    packages=["fedoiccli"],
+    url='https://github.com/IdentityPython/fedoidcservice',
+    packages=["fedoidcservice"],
     package_dir={"": "src"},
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -60,8 +58,9 @@ setup(
         "Programming Language :: Python :: 3.6",
         "Topic :: Software Development :: Libraries :: Python Modules"],
     install_requires=[
-        'oiccli',
-        'fedoicmsg',
+        'cryptojwt',
+        'oidcservice',
+        'fedoidcmsg',
         "Cherrypy",
         'cherrypy-cors >= 1.5'],
     zip_safe=False,

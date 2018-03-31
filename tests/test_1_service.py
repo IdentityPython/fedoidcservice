@@ -2,20 +2,20 @@ import os
 import pytest
 import shutil
 
-from fedoicmsg import MetadataStatement
-from fedoicmsg import test_utils
-from fedoicmsg.bundle import JWKSBundle
-from fedoicmsg.entity import FederationEntity
+from fedoidcmsg import MetadataStatement
+from fedoidcmsg import test_utils
+from fedoidcmsg.bundle import JWKSBundle
+from fedoidcmsg.entity import FederationEntity
+from oidcmsg.key_jar import KeyJar
 
-from fedoiccli.request import factory
+from fedoidcservice.service import factory
+from fedoidcservice.service import build_services
 
-from oicmsg.message import Message
-from oicmsg.oic import ProviderConfigurationResponse
+from oidcmsg.message import Message
+from oidcmsg.oidc import ProviderConfigurationResponse
 
-from oiccli import rndstr
-from oiccli.client_auth import CLIENT_AUTHN_METHOD
-from oiccli.client_info import ClientInfo
-from oiccli.oauth2 import build_services
+from oidcservice import rndstr
+from oidcservice.service_context import ServiceContext
 
 KEYDEFS = [
     {"type": "RSA", "key": '', "use": ["sig"]},
@@ -118,7 +118,23 @@ signer, keybundle = test_utils.setup(KEYDEFS, TOOL_ISS, liss, ms_path='ms',
 
 fo_keybundle = JWKSBundle('https://example.com')
 for iss in FO.values():
-    fo_keybundle[iss] = keybundle[iss]
+    kj = KeyJar()
+    kj.import_jwks(keybundle[iss].export_jwks(), iss)
+    fo_keybundle[iss] = kj
+
+
+class DB(object):
+    def __init__(self):
+        self.db = {}
+
+    def set(self, key, value):
+        self.db[key] = value
+
+    def get(self, item):
+        try:
+            return self.db[item]
+        except KeyError:
+            return None
 
 
 def create_client_request_response():
@@ -138,8 +154,7 @@ def create_client_request_response():
     req['metadata_statements'] = signer[
         OA['sunet']].create_signed_metadata_statement(req, 'discovery')
 
-    return Response(
-        200, req.to_json(), headers={'content-type': "application/json"})
+    return req.to_json()
 
 
 class Response(object):
@@ -160,43 +175,42 @@ class TestProviderInfoRequest(object):
                                    signer=signer[OA['uninett']],
                                    fo_bundle=fo_keybundle)
 
-        self.req = factory('FedProviderInfoDiscovery',
-                           client_authn_method=CLIENT_AUTHN_METHOD,
-                           federation_entity=fed_ent)
         client_config = {'client_id': 'client_id', 'client_secret': 'password',
                          'redirect_uris': ['https://example.com/cli/authz_cb'],
                          'issuer': EO['sunet.op'],
-                         'client_prefs': {
+                         'client_preferences': {
                              'id_token_signed_response_alg': 'RS384',
                              'userinfo_signed_response_alg': 'RS384'
                          }}
-        self.cli_info = ClientInfo(config=client_config)
-        self.cli_info.service = build_services(
-            ['FedProviderInfoDiscovery', 'FedRegistrationRequest'],
-            factory, None, None, CLIENT_AUTHN_METHOD)
-
-        self.cli_info.fo_priority = [FO['feide']]
-        self.cli_info.federation = ''
-        self.cli_info.provider_federations = None
-        self.cli_info.registration_federations = None
+        _context = ServiceContext(config=client_config)
+        _context.fo_priority = [FO['feide']]
+        _context.federation = ''
+        _context.provider_federations = None
+        _context.registration_federations = None
+        self.service = build_services(
+            {'FedProviderInfoDiscovery': {}, 'FedRegistrationRequest': {}},
+            factory, _context, DB(), federation_entity=fed_ent)
 
     def test_construct(self):
-        _req = self.req.construct(self.cli_info)
+        _srv = self.service['registration']
+        _req = _srv.construct()
         assert isinstance(_req, Message)
-        assert len(_req) == 0
+        assert _req.to_dict() == {
+            'redirect_uris': ['https://example.com/cli/authz_cb']}
 
     def test_request_info(self):
-        _info = self.req.request_info(self.cli_info)
-        assert set(_info.keys()) == {'uri'}
-        assert _info['uri'] == '{}/.well-known/openid-configuration'.format(
+        _srv = self.service['provider_info']
+        _info = _srv.get_request_parameters()
+        assert set(_info.keys()) == {'method', 'url'}
+        assert _info['url'] == '{}/.well-known/openid-configuration'.format(
             EO['sunet.op'])
 
-    def test_parse_request_response_one_federation_priority(self):
+    def test_parse_response_one_federation_priority(self):
         req_resp = create_client_request_response()
-        resp = self.req.parse_request_response(req_resp, self.cli_info,
-                                               body_type='json')
+        _srv = self.service['provider_info']
+        resp = _srv.parse_response(req_resp)
         assert isinstance(resp, ProviderConfigurationResponse)
-        assert set(self.cli_info.provider_info.keys()) == {
+        assert set(_srv.service_context.provider_info.keys()) == {
             'issuer', 'response_types_supported', 'version',
             'grant_types_supported', 'subject_types_supported',
             'authorization_endpoint', 'jwks_uri',
@@ -207,18 +221,18 @@ class TestProviderInfoRequest(object):
             'require_request_uri_registration',
             'userinfo_signing_alg_values_supported',
             'federation_usage'}
-        assert self.cli_info.behaviour == {
+        assert _srv.service_context.behaviour == {
             'id_token_signed_response_alg': 'RS384',
             'userinfo_signed_response_alg': 'RS384'}
-        assert self.cli_info.federation == FO['feide']
+        assert _srv.service_context.federation == FO['feide']
 
-    def test_parse_request_response_another_federation_priority(self):
-        self.cli_info.fo_priority = [FO['swamid'], FO['feide']]
+    def test_parse_response_another_federation_priority(self):
+        _srv = self.service['provider_info']
+        _srv.service_context.fo_priority = [FO['swamid'], FO['feide']]
         req_resp = create_client_request_response()
-        resp = self.req.parse_request_response(req_resp, self.cli_info,
-                                               body_type='json')
+        resp = _srv.parse_response(req_resp, body_type='json')
         assert isinstance(resp, ProviderConfigurationResponse)
-        assert set(self.cli_info.provider_info.keys()) == {
+        assert set(_srv.service_context.provider_info.keys()) == {
             'issuer', 'response_types_supported', 'version',
             'grant_types_supported', 'subject_types_supported',
             'authorization_endpoint', 'jwks_uri',
@@ -229,10 +243,10 @@ class TestProviderInfoRequest(object):
             'require_request_uri_registration',
             'userinfo_signing_alg_values_supported',
             'federation_usage'}
-        assert self.cli_info.behaviour == {
+        assert _srv.service_context.behaviour == {
             'id_token_signed_response_alg': 'RS384',
             'userinfo_signed_response_alg': 'RS384'}
-        assert self.cli_info.federation == FO['swamid']
+        assert _srv.service_context.federation == FO['swamid']
 
 
 class TestRegistrationRequest(object):
@@ -246,9 +260,6 @@ class TestRegistrationRequest(object):
                                    signer=signer[OA['uninett']],
                                    fo_bundle=fo_keybundle)
 
-        self.req = factory('FedRegistrationRequest',
-                           client_authn_method=CLIENT_AUTHN_METHOD,
-                           federation_entity=fed_ent)
         self._iss = 'https://example.com/as'
         client_config = {'client_id': 'client_id',
                          'client_secret': 'password',
@@ -256,29 +267,33 @@ class TestRegistrationRequest(object):
                              'https://example.com/cli/authz_cb'],
                          'issuer': self._iss, 'requests_dir': 'requests',
                          'base_url': 'https://example.com/cli/'}
-        self.cli_info = ClientInfo(config=client_config)
-        self.cli_info.service = build_services(
-            ['FedProviderInfoDiscovery', 'FedRegistrationRequest'],
-            factory, None, None, CLIENT_AUTHN_METHOD)
-        self.cli_info.federation = FO['feide']
+        _context = ServiceContext(config=client_config)
+        _context.federation = FO['feide']
+        self.service = build_services(
+            {'FedProviderInfoDiscovery': {}, 'FedRegistrationRequest': {}},
+            factory, _context, DB(), fed_ent)
 
     def test_construct(self):
-        _req = self.req.construct(self.cli_info)
+        _srv = self.service['registration']
+        _req = _srv.construct()
         assert isinstance(_req, MetadataStatement)
         assert len(_req) == 2
         assert set(_req['metadata_statements'].keys()) == {FO['feide']}
 
     def test_config_with_post_logout(self):
-        self.cli_info.post_logout_redirect_uris = [
+        _srv = self.service['registration']
+        _srv.service_context.post_logout_redirect_uris = [
             'https://example.com/post_logout']
-        _req = self.req.construct(self.cli_info)
+        _req = _srv.construct()
         assert isinstance(_req, MetadataStatement)
         assert len(_req) == 3
         assert 'post_logout_redirect_uris' in _req
 
     def test_config_with_required_request_uri(self):
-        self.cli_info.provider_info['require_request_uri_registration'] = True
-        _req = self.req.construct(self.cli_info)
+        _srv = self.service['registration']
+        _srv.service_context.provider_info[
+            'require_request_uri_registration'] = True
+        _req = _srv.construct()
         assert isinstance(_req, MetadataStatement)
         assert len(_req) == 3
         assert 'request_uris' in _req

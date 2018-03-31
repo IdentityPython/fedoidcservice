@@ -2,14 +2,13 @@ import os
 import pytest
 import shutil
 
-from fedoiccli import Client
-from fedoicmsg import ClientMetadataStatement
-from fedoicmsg import ProviderConfigurationResponse
-from fedoicmsg import test_utils
+from fedoidcmsg import ClientMetadataStatement
+from fedoidcmsg import ProviderConfigurationResponse
+from fedoidcmsg import test_utils
 from fedoidc.operator import Operator
-from oiccli import rndstr
-from oiccli.exception import ConfigurationError
-from oicmsg.message import Message
+from oidccli import rndstr
+from oidccli.exception import ConfigurationError
+from oidcmsg.message import Message
 
 KEYDEFS = [
     {"type": "RSA", "key": '', "use": ["sig"]},
