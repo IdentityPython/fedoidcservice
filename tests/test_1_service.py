@@ -2,10 +2,11 @@ import os
 import pytest
 import shutil
 
-from fedoidcmsg import MetadataStatement
+from fedoidcmsg import MetadataStatement, NoSuitableFederation
 from fedoidcmsg import test_utils
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.entity import FederationEntity
+from fedoidcmsg.operator import Operator
 
 from fedoidcservice.service import build_services
 from fedoidcservice.service import factory
@@ -137,7 +138,7 @@ class DB(object):
             return None
 
 
-def create_client_request_response():
+def create_provider_info_response():
     req = ProviderConfigurationResponse(
         issuer=EO['sunet.op'], response_types_supported=['code'],
         grant_types_supported=['Bearer'],
@@ -199,7 +200,7 @@ class TestProviderInfoRequest(object):
             EO['sunet.op'])
 
     def test_parse_response_one_federation_priority(self):
-        req_resp = create_client_request_response()
+        req_resp = create_provider_info_response()
         _srv = self.service['provider_info']
         resp = _srv.parse_response(req_resp)
         assert isinstance(resp, ProviderConfigurationResponse)
@@ -223,7 +224,7 @@ class TestProviderInfoRequest(object):
     def test_parse_response_another_federation_priority(self):
         _srv = self.service['provider_info']
         _srv.service_context.fo_priority = [FO['swamid'], FO['feide']]
-        req_resp = create_client_request_response()
+        req_resp = create_provider_info_response()
         resp = _srv.parse_response(req_resp, body_type='json')
         assert isinstance(resp, ProviderConfigurationResponse)
         _srv.update_service_context(resp)
@@ -242,6 +243,46 @@ class TestProviderInfoRequest(object):
             'id_token_signed_response_alg': 'RS384',
             'userinfo_signed_response_alg': 'RS384'}
         assert _srv.service_context.federation == FO['swamid']
+
+    def test_parse_response_unknown_federations(self):
+        _srv = self.service['provider_info']
+        _srv.service_context.fo_priority = ['https://fo.surfnet.nl']
+        req_resp = create_provider_info_response()
+        resp = _srv.parse_response(req_resp, body_type='json')
+        assert isinstance(resp, ProviderConfigurationResponse)
+        with pytest.raises(NoSuitableFederation):
+            _srv.update_service_context(resp)
+
+    def test_no_federation_response(self):
+        pc_resp = ProviderConfigurationResponse(
+            issuer=EO['sunet.op'], response_types_supported=['code'],
+            grant_types_supported=['Bearer'],
+            subject_types_supported=['pairwise'],
+            authorization_endpoint='https://example.com/op/authz',
+            jwks_uri='https://example.com/op/jwks.json',
+            token_endpoint='https://example.com/op/token',
+            id_token_signing_alg_values_supported=['RS256', 'RS384',
+                                                   'RS512'],
+            userinfo_signing_alg_values_supported=['RS256', 'RS384',
+                                                   'RS512']
+        )
+
+        _srv = self.service['provider_info']
+        _srv.service_context.fo_priority = ['https://fo.surfnet.nl']
+        resp = _srv.parse_response(pc_resp.to_json(), body_type='json')
+        assert isinstance(resp, ProviderConfigurationResponse)
+        _srv.update_service_context(resp)
+        assert set(_srv.service_context.provider_info.keys()) == {
+            'issuer', 'response_types_supported', 'version',
+            'grant_types_supported', 'subject_types_supported',
+            'authorization_endpoint', 'jwks_uri',
+            'id_token_signing_alg_values_supported',
+            'request_uri_parameter_supported', 'request_parameter_supported',
+            'claims_parameter_supported', 'token_endpoint',
+            'token_endpoint_auth_methods_supported',
+            'require_request_uri_registration',
+            'userinfo_signing_alg_values_supported'}
+        assert _srv.service_context.federation == ''
 
 
 class TestRegistrationRequest(object):
@@ -292,3 +333,17 @@ class TestRegistrationRequest(object):
         assert isinstance(_req, MetadataStatement)
         assert len(_req) == 3
         assert 'request_uris' in _req
+
+    def test_construct_with_receiver(self):
+        _srv = self.service['registration']
+        _req = _srv.construct(receiver='https://example.com/op')
+        assert isinstance(_req, MetadataStatement)
+        assert len(_req) == 2
+        assert set(_req['metadata_statements'].keys()) == {FO['feide']}
+        op = Operator(jwks_bundle=fo_keybundle)
+        r = op.unpack_metadata_statement(_req)
+        assert r
+        l = op.evaluate_metadata_statement(r.result)
+        assert l
+        assert len(l) == 1
+        assert set(l[0].le.keys()) == {'federation_usage', 'redirect_uris'}

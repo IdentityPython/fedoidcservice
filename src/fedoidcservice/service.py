@@ -4,6 +4,7 @@ import sys
 import fedoidcmsg
 from fedoidcmsg import ClientMetadataStatement
 from fedoidcmsg import ProviderConfigurationResponse
+from fedoidcmsg.signing_service import InternalSigningService
 from fedoidcmsg.utils import replace_jwks_key_bundle
 from fedoidcmsg import NoTrustedClaims
 
@@ -12,6 +13,9 @@ from oidcservice.oidc.service import ProviderInfoDiscovery
 from oidcservice.oidc.service import Registration
 from oidcservice.service import Service
 from oidcmsg.exception import RegistrationError
+
+
+IGNORE = ['metadata_statements', 'metadata_statement_uri']
 
 
 class FedRegistrationRequest(Registration):
@@ -23,12 +27,39 @@ class FedRegistrationRequest(Registration):
         Registration.__init__(self, service_context, state_db, conf=conf,
                               client_authn_factory=client_authn_factory)
         self.federation_entity = federation_entity
-        # Must be done last
+        #
+        self.pre_construct.append(self.carry_receiver)
         self.post_construct.append(self.fedoidc_post_construct)
+        self.post_construct.append(self.self_signed_request)
 
-    def fedoidc_post_construct(self, request_args=None, **kwargs):
-        req_args = self.federated_client_registration_request(request_args)
-        return req_args
+    @staticmethod
+    def carry_receiver(request, **kwargs):
+        if 'receiver' in kwargs:
+            return request, {'receiver': kwargs['receiver']}
+        else:
+            return request, {}
+
+    def fedoidc_post_construct(self, request=None, service=None, **kwargs):
+        request = self.federated_client_registration_request(request)
+        return request
+
+    def self_signed_request(self, request, receiver='', service=None, **kwargs):
+        if receiver:
+            _args = dict([(k,v) for k,v in request.items() if k not in IGNORE])
+            new_request = self.msg_type(**_args)
+            new_request['metadata_statements'] = {}
+
+            iss = InternalSigningService(self.federation_entity.iss,
+                                         self.federation_entity.keyjar)
+            for fo,_jws in request['metadata_statements'].items():
+                _req =  self.msg_type(**_args)
+                _req['metadata_statements'] = {fo:_jws}
+                _data = iss.create(_req, receiver)
+                new_request['metadata_statements'][fo] = _data['sms']
+
+            return new_request
+        else:
+            return request
 
     def federated_client_registration_request(self, req_args):
         """
@@ -127,7 +158,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         try:
             fos = response['fos']
         except KeyError:
-            pass
+            self.service_context.provider_info = response
         else:
             # Possible FO choices
             possible = set(fos.keys()).intersection(
@@ -170,7 +201,10 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
 
         les = self.federation_entity.get_metadata_statement(
             response, cls=ProviderConfigurationResponse)
-        response['fos'] = dict([(l.fo, l) for l in les])
+
+        if les:
+            response['fos'] = dict([(l.fo, l) for l in les])
+
         return response
 
 
