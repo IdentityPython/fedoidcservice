@@ -6,16 +6,16 @@ from fedoidcmsg import MetadataStatement
 from fedoidcmsg import test_utils
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.entity import FederationEntity
-from oidcmsg.key_jar import KeyJar
 
-from fedoidcservice.service import factory
 from fedoidcservice.service import build_services
 
 from oidcmsg.message import Message
+from oidcmsg.key_jar import KeyJar
 from oidcmsg.oidc import ProviderConfigurationResponse
 
 from oidcservice import rndstr
 from oidcservice.service_context import ServiceContext
+
 
 KEYDEFS = [
     {"type": "RSA", "key": '', "use": ["sig"]},
