@@ -43,7 +43,7 @@ with open('src/fedoidcservice/__init__.py', 'r') as fd:
 setup(
     name="fedoidcservice",
     version=version,
-    description="Python implementation of the OpenID Connect federation draft",
+    description="Python implementation of the RP part of the OpenID Connect federation draft",
     author="Roland Hedberg",
     author_email="roland@catalogix.se",
     license="Apache 2.0",
@@ -59,6 +59,7 @@ setup(
         "Topic :: Software Development :: Libraries :: Python Modules"],
     install_requires=[
         'cryptojwt',
+        'oidcmsg',
         'oidcservice',
         'fedoidcmsg',
         "Cherrypy",

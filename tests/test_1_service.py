@@ -8,8 +8,8 @@ from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.entity import FederationEntity
 
 from fedoidcservice.service import build_services
+from fedoidcservice.service import factory
 
-from oidcmsg.message import Message
 from oidcmsg.key_jar import KeyJar
 from oidcmsg.oidc import ProviderConfigurationResponse
 
@@ -166,7 +166,7 @@ class Response(object):
 
 class TestProviderInfoRequest(object):
     @pytest.fixture(autouse=True)
-    def create_request(self):
+    def create_services(self):
         # RP
         foodle_rp = EO['foodle.rp']
 
@@ -191,13 +191,6 @@ class TestProviderInfoRequest(object):
             {'FedProviderInfoDiscovery': {}, 'FedRegistrationRequest': {}},
             factory, _context, DB(), federation_entity=fed_ent)
 
-    def test_construct(self):
-        _srv = self.service['registration']
-        _req = _srv.construct()
-        assert isinstance(_req, Message)
-        assert _req.to_dict() == {
-            'redirect_uris': ['https://example.com/cli/authz_cb']}
-
     def test_request_info(self):
         _srv = self.service['provider_info']
         _info = _srv.get_request_parameters()
@@ -210,6 +203,7 @@ class TestProviderInfoRequest(object):
         _srv = self.service['provider_info']
         resp = _srv.parse_response(req_resp)
         assert isinstance(resp, ProviderConfigurationResponse)
+        _srv.update_service_context(resp)
         assert set(_srv.service_context.provider_info.keys()) == {
             'issuer', 'response_types_supported', 'version',
             'grant_types_supported', 'subject_types_supported',
@@ -232,6 +226,7 @@ class TestProviderInfoRequest(object):
         req_resp = create_client_request_response()
         resp = _srv.parse_response(req_resp, body_type='json')
         assert isinstance(resp, ProviderConfigurationResponse)
+        _srv.update_service_context(resp)
         assert set(_srv.service_context.provider_info.keys()) == {
             'issuer', 'response_types_supported', 'version',
             'grant_types_supported', 'subject_types_supported',
@@ -251,7 +246,7 @@ class TestProviderInfoRequest(object):
 
 class TestRegistrationRequest(object):
     @pytest.fixture(autouse=True)
-    def create_request(self):
+    def create_services(self):
         # RP
         foodle_rp = EO['foodle.rp']
 
@@ -271,7 +266,7 @@ class TestRegistrationRequest(object):
         _context.federation = FO['feide']
         self.service = build_services(
             {'FedProviderInfoDiscovery': {}, 'FedRegistrationRequest': {}},
-            factory, _context, DB(), fed_ent)
+            factory, _context, DB(), federation_entity=fed_ent)
 
     def test_construct(self):
         _srv = self.service['registration']

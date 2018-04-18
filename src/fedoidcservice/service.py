@@ -11,7 +11,6 @@ from oidcservice.oidc import service
 from oidcservice.oidc.service import ProviderInfoDiscovery
 from oidcservice.oidc.service import Registration
 from oidcservice.service import Service
-from oidcmsg.exception import ParameterError
 from oidcmsg.exception import RegistrationError
 
 
@@ -85,10 +84,11 @@ class FedRegistrationRequest(Registration):
 class FedProviderInfoDiscovery(ProviderInfoDiscovery):
     response_cls = fedoidcmsg.ProviderConfigurationResponse
 
-    def __init__(self, httplib=None, keyjar=None, client_authn_method=None,
-                 federation_entity=None, **kwargs):
-        ProviderInfoDiscovery.__init__(self, httplib, keyjar,
-                                       client_authn_method)
+    def __init__(self, service_context, state_db, conf=None,
+                 client_authn_factory=None, federation_entity=None, **kwargs):
+        ProviderInfoDiscovery.__init__(
+            self, service_context, state_db, conf=conf,
+            client_authn_factory=client_authn_factory, )
         self.federation_entity = federation_entity
 
     def store_federation_info(self, loe):
@@ -96,6 +96,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
 
         :param loe: LessOrEqual instance
         """
+        # Only use trusted claims
         trusted_claims = loe.protected_claims()
         if trusted_claims is None:
             raise NoTrustedClaims()
@@ -112,48 +113,65 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         self.service_context.provider_info = _pi
         self.service_context.federation = loe.fo
 
-    def parse_federation_provider_info(self, response, **kwargs):
+    def update_service_context(self, response, **kwargs):
         """
-        Takes a provider info response and parses it.
-        If according to the info the OP has more then one federation 
-        in common with the client then the decision has to be handled higher up.
-        The list of :py:class:`fedoidcmsg.operator.LessOrEqual` instances are 
+        The list of :py:class:`fedoidcmsg.operator.LessOrEqual` instances are
         stored in *provider_federations*.
         If the OP and RP only has one federation in common then the choice is
-        easy and the name of the federation are stored in the *federation* 
-        attribute while the provider info are stored in the normal pyoidc 
-        Client way.
+        easy and the name of the federation are stored in the *federation*
+        attribute while the provider info are stored in the service_context.
+
+        :param response:
+        :param kwargs:
+        """
+        try:
+            fos = response['fos']
+        except KeyError:
+            pass
+        else:
+            # Possible FO choices
+            possible = set(fos.keys()).intersection(
+                self.service_context.fo_priority)
+            if not possible:
+                raise fedoidcmsg.NoSuitableFederation(
+                    'Available: {}'.format(fos.keys()))
+
+            # At this point in time I may not know within which
+            # federation I'll be working.
+            if len(possible) == 1:
+                self.store_federation_info(fos[possible.pop()])
+            else:
+                # store everything I may use of what I got for later reference
+                self.service_context.provider_federations = possible
+
+                # Go through the priority list and grab the first one that
+                # matches and store that information in *provider_info*.
+                for fo in self.service_context.fo_priority:
+                    if fo in possible:
+                        self.store_federation_info(fos[fo])
+                        break
+
+        if self.service_context.provider_info:
+            self.match_preferences(self.service_context.provider_info,
+                                   self.service_context.issuer)
+
+    def post_parse_response(self, response, **kwargs):
+        """
+        Takes a provider info response and parses it.
+        If according to the info the OP has more then one federation
+        in common with the client then the decision has to be handled higher up.
+        For each Metadata statement that appears in the response, and was
+        possible to parse, one :py:class:`fedoidcmsg.operator.LessOrEqual`
+        instance is store in the response by federatiion operator ID under the
+        key 'fos'.
 
         :param response: A MetadataStatement instance
         """
 
         les = self.federation_entity.get_metadata_statement(
             response, cls=ProviderConfigurationResponse)
-
-        if not les:  # No metadata statement that I can use
-            raise ParameterError('No trusted metadata')
-
-        # response is a list of metadata statements
-
-        # At this point in time I may not know within which
-        # federation I'll be working.
-        if len(les) == 1:
-            self.store_federation_info(les[0])
-        else:
-            self.service_context.provider_federations = les
-            for fo in self.service_context.fo_priority:
-                for _loe in les:
-                    if _loe.fo == fo:
-                        self.store_federation_info(_loe)
-                        return
-            raise fedoidcmsg.NoSuitableFederation('Available: {}'.format(
-                [l.le for l in les]))
-
-    def fedoidc_post_parse_response(self, resp, **kwargs):
-        self.parse_federation_provider_info(resp)
-        if self.service_context.provider_info:
-            self.match_preferences(self.service_context.provider_info,
-                                   self.service_context.issuer)
+        response['fos'] = dict([(l.fo, l) for l in les])
+        return response
 
 
 def build_services(service_definitions, service_factory, service_context,
