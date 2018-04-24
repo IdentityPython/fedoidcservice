@@ -6,7 +6,6 @@ from fedoidcmsg import ClientMetadataStatement
 from fedoidcmsg import ProviderConfigurationResponse
 from fedoidcmsg.signing_service import InternalSigningService
 from fedoidcmsg.utils import replace_jwks_key_bundle
-from fedoidcmsg import NoTrustedClaims
 
 from oidcservice.oidc import service
 from oidcservice.oidc.service import ProviderInfoDiscovery
@@ -130,7 +129,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         # Only use trusted claims
         trusted_claims = loe.protected_claims()
         if trusted_claims is None:
-            raise NoTrustedClaims()
+            raise fedoidcmsg.NoTrustedClaims()
         _pi = self.response_cls(**trusted_claims)
 
         if 'signed_jwks_uri' in _pi:
