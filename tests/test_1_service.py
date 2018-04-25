@@ -2,7 +2,8 @@ import os
 import pytest
 import shutil
 
-from fedoidcmsg import MetadataStatement, NoSuitableFederation
+from fedoidcmsg import MetadataStatement
+from fedoidcmsg import NoSuitableFederation
 from fedoidcmsg import test_utils
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.entity import FederationEntity
@@ -16,7 +17,6 @@ from oidcmsg.oidc import ProviderConfigurationResponse
 
 from oidcservice import rndstr
 from oidcservice.service_context import ServiceContext
-
 
 KEYDEFS = [
     {"type": "RSA", "key": '', "use": ["sig"]},
@@ -347,3 +347,8 @@ class TestRegistrationRequest(object):
         assert l
         assert len(l) == 1
         assert set(l[0].le.keys()) == {'federation_usage', 'redirect_uris'}
+
+        assert r.signers() == [
+            ['https://www.feide.no','https://uninett.no',
+             'https://foodle.uninett.no']
+        ]
