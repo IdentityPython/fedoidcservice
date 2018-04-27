@@ -22,10 +22,9 @@ class FedRegistrationRequest(Registration):
     response_cls = ClientMetadataStatement
 
     def __init__(self, service_context, state_db, conf=None,
-                 client_authn_factory=None, federation_entity=None, **kwargs):
+                 client_authn_factory=None, **kwargs):
         Registration.__init__(self, service_context, state_db, conf=conf,
                               client_authn_factory=client_authn_factory)
-        self.federation_entity = federation_entity
         #
         self.pre_construct.append(self.carry_receiver)
         self.post_construct.append(self.fedoidc_post_construct)
@@ -48,8 +47,8 @@ class FedRegistrationRequest(Registration):
             new_request = self.msg_type(**_args)
             new_request['metadata_statements'] = {}
 
-            iss = InternalSigningService(self.federation_entity.iss,
-                                         self.federation_entity.keyjar)
+            _fe = self.service_context.federation_entity
+            iss = InternalSigningService(_fe.iss, _fe.keyjar)
             for fo,_jws in request['metadata_statements'].items():
                 _req =  self.msg_type(**_args)
                 _req['metadata_statements'] = {fo:_jws}
@@ -69,12 +68,12 @@ class FedRegistrationRequest(Registration):
         :return: A :py:class:`ClientMetadataStatement`
         """
 
-        if self.service_context.federation:
-            return self.federation_entity.update_request(
-                req_args, federation=self.service_context.federation)
-        elif self.service_context.provider_federations:
-            return self.federation_entity.update_request(
-                req_args, loes=self.service_context.provider_federations)
+        _fe = self.service_context.federation_entity
+
+        if _fe.federation:
+            return _fe.update_request(req_args, federation=_fe.federation)
+        elif _fe.provider_federations:
+            return _fe.update_request(req_args, loes=_fe.provider_federations)
 
     def post_parse_response(self, resp, **kwargs):
         """
@@ -90,7 +89,9 @@ class FedRegistrationRequest(Registration):
 
         :param resp: A MetadataStatement instance or a dictionary
         """
-        ms_list = self.federation_entity.get_metadata_statement(
+        _fe = self.service_context.federation_entity
+
+        ms_list = _fe.get_metadata_statement(
             resp, cls=ClientMetadataStatement)
 
         if not ms_list:  # No metadata statement that I can use
@@ -103,23 +104,24 @@ class FedRegistrationRequest(Registration):
         if len(ms_list) == 1:
             ms = ms_list[0]
             self.service_context.provider_info = ms.protected_claims()
-            self.service_context.federation = ms.fo
+            _fe.federation = ms.fo
         else:
-            self.service_context.registration_federations = ms_list
+            _fe.registration_federations = ms_list
 
-    # def _post_parse_response(self, resp, cli_info, **kwargs):
-    #     self.parse_federation_registration(resp, cli_info=cli_info)
+    def update_service_context(self, resp, state='', **kwargs):
+        Registration.update_service_context(self, resp, state, **kwargs)
+        _fe = self.service_context.federation_entity
+        _fe.iss = resp['client_id']
 
 
 class FedProviderInfoDiscovery(ProviderInfoDiscovery):
     response_cls = fedoidcmsg.ProviderConfigurationResponse
 
     def __init__(self, service_context, state_db, conf=None,
-                 client_authn_factory=None, federation_entity=None, **kwargs):
+                 client_authn_factory=None, **kwargs):
         ProviderInfoDiscovery.__init__(
             self, service_context, state_db, conf=conf,
             client_authn_factory=client_authn_factory, )
-        self.federation_entity = federation_entity
 
     def store_federation_info(self, loe):
         """
@@ -198,7 +200,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         :param response: A MetadataStatement instance
         """
 
-        les = self.federation_entity.get_metadata_statement(
+        les = self.service_context.federation_entity.get_metadata_statement(
             response, cls=ProviderConfigurationResponse)
 
         if les:
@@ -207,34 +209,34 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         return response
 
 
-def build_services(service_definitions, service_factory, service_context,
-                   state_db, client_authn_factory=None, federation_entity=None):
-    """
-    This function will build a number of :py:class:`oidcservice.service.Service`
-    instances based on the service definitions provided.
-
-    :param service_definitions: A dictionary of service definitions. The keys
-        are the names of the subclasses. The values are configurations.
-    :param service_factory: A factory that can initiate a service class
-    :param service_context: A reference to the service context, this is the same
-        for all service instances.
-    :param state_db: A reference to the state database. Shared by all the
-        services.
-    :param client_authn_factory: A list of methods the services can use to
-        authenticate the client to a service.
-    :return: A dictionary, with service name as key and the service instance as
-        value.
-    """
-    services = {}
-    for service_name, service_configuration in service_definitions.items():
-        _srv = service_factory(service_name, service_context=service_context,
-                               state_db=state_db,
-                               client_authn_factory=client_authn_factory,
-                               conf=service_configuration,
-                               federation_entity=federation_entity)
-        services[_srv.service_name] = _srv
-
-    return services
+# def build_services(service_definitions, service_factory, service_context,
+#                    state_db, client_authn_factory=None, federation_entity=None):
+#     """
+#     This function will build a number of :py:class:`oidcservice.service.Service`
+#     instances based on the service definitions provided.
+#
+#     :param service_definitions: A dictionary of service definitions. The keys
+#         are the names of the subclasses. The values are configurations.
+#     :param service_factory: A factory that can initiate a service class
+#     :param service_context: A reference to the service context, this is the same
+#         for all service instances.
+#     :param state_db: A reference to the state database. Shared by all the
+#         services.
+#     :param client_authn_factory: A list of methods the services can use to
+#         authenticate the client to a service.
+#     :return: A dictionary, with service name as key and the service instance as
+#         value.
+#     """
+#     services = {}
+#     for service_name, service_configuration in service_definitions.items():
+#         _srv = service_factory(service_name, service_context=service_context,
+#                                state_db=state_db,
+#                                client_authn_factory=client_authn_factory,
+#                                conf=service_configuration,
+#                                federation_entity=federation_entity)
+#         services[_srv.service_name] = _srv
+#
+#     return services
 
 
 def factory(req_name, **kwargs):
