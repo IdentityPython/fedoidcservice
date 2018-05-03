@@ -1,10 +1,10 @@
 import inspect
+import logging
 import sys
 
 import fedoidcmsg
 from fedoidcmsg import ClientMetadataStatement
 from fedoidcmsg import ProviderConfigurationResponse
-from fedoidcmsg.signing_service import InternalSigningService
 from fedoidcmsg.utils import replace_jwks_key_bundle
 
 from oidcservice.oidc import service
@@ -12,6 +12,9 @@ from oidcservice.oidc.service import ProviderInfoDiscovery
 from oidcservice.oidc.service import Registration
 from oidcservice.service import Service
 from oidcmsg.exception import RegistrationError
+
+
+logger = logging.getLogger(__name__)
 
 
 IGNORE = ['metadata_statements', 'metadata_statement_uri']
@@ -26,9 +29,7 @@ class FedRegistrationRequest(Registration):
         Registration.__init__(self, service_context, state_db, conf=conf,
                               client_authn_factory=client_authn_factory)
         #
-        self.pre_construct.append(self.carry_receiver)
-        self.post_construct.append(self.fedoidc_post_construct)
-        self.post_construct.append(self.self_signed_request)
+        self.post_construct.append(self.add_federation_context)
 
     @staticmethod
     def carry_receiver(request, **kwargs):
@@ -37,43 +38,10 @@ class FedRegistrationRequest(Registration):
         else:
             return request, {}
 
-    def fedoidc_post_construct(self, request=None, service=None, **kwargs):
-        request = self.federated_client_registration_request(request)
-        return request
-
-    def self_signed_request(self, request, receiver='', service=None, **kwargs):
-        if receiver:
-            _args = dict([(k,v) for k,v in request.items() if k not in IGNORE])
-            new_request = self.msg_type(**_args)
-            new_request['metadata_statements'] = {}
-
-            _fe = self.service_context.federation_entity
-            iss = InternalSigningService(_fe.iss, _fe.keyjar)
-            for fo,_jws in request['metadata_statements'].items():
-                _req =  self.msg_type(**_args)
-                _req['metadata_statements'] = {fo:_jws}
-                _data = iss.create(_req, receiver)
-                new_request['metadata_statements'][fo] = _data['sms']
-
-            return new_request
-        else:
-            return request
-
-    def federated_client_registration_request(self, req_args):
-        """
-        Constructs a client registration request to be used by a client in a 
-        federation.
-
-        :param req_args: The request arguments
-        :return: A :py:class:`ClientMetadataStatement`
-        """
-
+    def add_federation_context(self, request, service=None, receiver='',
+                               **kwargs):
         _fe = self.service_context.federation_entity
-
-        if _fe.federation:
-            return _fe.update_request(req_args, federation=_fe.federation)
-        elif _fe.provider_federations:
-            return _fe.update_request(req_args, loes=_fe.provider_federations)
+        return _fe.update_metadata_statement(request, receiver=receiver)
 
     def post_parse_response(self, resp, **kwargs):
         """
@@ -143,7 +111,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
                                     self.service_context.issuer, _kb)
 
         self.service_context.provider_info = _pi
-        self.service_context.federation = loe.fo
+        self.service_context.federation_entity.federation = loe.fo
 
     def update_service_context(self, response, **kwargs):
         """
@@ -161,9 +129,14 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
         except KeyError:
             self.service_context.provider_info = response
         else:
+            if set(fos.keys()) == {''}:
+                del response['fos']
+                self.service_context.provider_info = response
+                return
+
+            _fe = self.service_context.federation_entity
             # Possible FO choices
-            possible = set(fos.keys()).intersection(
-                self.service_context.fo_priority)
+            possible = set(fos.keys()).intersection(_fe.fo_priority)
             if not possible:
                 raise fedoidcmsg.NoSuitableFederation(
                     'Available: {}'.format(fos.keys()))
@@ -174,11 +147,11 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
                 self.store_federation_info(fos[possible.pop()])
             else:
                 # store everything I may use of what I got for later reference
-                self.service_context.provider_federations = possible
+                _fe.provider_federations = possible
 
                 # Go through the priority list and grab the first one that
                 # matches and store that information in *provider_info*.
-                for fo in self.service_context.fo_priority:
+                for fo in _fe.fo_priority:
                     if fo in possible:
                         self.store_federation_info(fos[fo])
                         break
@@ -207,36 +180,6 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
             response['fos'] = dict([(l.fo, l) for l in les])
 
         return response
-
-
-# def build_services(service_definitions, service_factory, service_context,
-#                    state_db, client_authn_factory=None, federation_entity=None):
-#     """
-#     This function will build a number of :py:class:`oidcservice.service.Service`
-#     instances based on the service definitions provided.
-#
-#     :param service_definitions: A dictionary of service definitions. The keys
-#         are the names of the subclasses. The values are configurations.
-#     :param service_factory: A factory that can initiate a service class
-#     :param service_context: A reference to the service context, this is the same
-#         for all service instances.
-#     :param state_db: A reference to the state database. Shared by all the
-#         services.
-#     :param client_authn_factory: A list of methods the services can use to
-#         authenticate the client to a service.
-#     :return: A dictionary, with service name as key and the service instance as
-#         value.
-#     """
-#     services = {}
-#     for service_name, service_configuration in service_definitions.items():
-#         _srv = service_factory(service_name, service_context=service_context,
-#                                state_db=state_db,
-#                                client_authn_factory=client_authn_factory,
-#                                conf=service_configuration,
-#                                federation_entity=federation_entity)
-#         services[_srv.service_name] = _srv
-#
-#     return services
 
 
 def factory(req_name, **kwargs):
