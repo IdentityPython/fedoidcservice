@@ -71,10 +71,12 @@ class FedRegistrationRequest(Registration):
         # federation I'll be working.
         if len(ms_list) == 1:
             ms = ms_list[0]
-            self.service_context.provider_info = ms.protected_claims()
+            resp = ms.protected_claims()
             _fe.federation = ms.fo
         else:
+            # apply FO priority
             _fe.registration_federations = ms_list
+        return resp
 
     def update_service_context(self, resp, state='', **kwargs):
         Registration.update_service_context(self, resp, state, **kwargs)
@@ -157,6 +159,7 @@ class FedProviderInfoDiscovery(ProviderInfoDiscovery):
                         break
 
         if self.service_context.provider_info:
+            self._update_service_context(self.service_context.provider_info)
             self.match_preferences(self.service_context.provider_info,
                                    self.service_context.issuer)
 
