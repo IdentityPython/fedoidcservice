@@ -2,8 +2,8 @@ import copy
 import os
 
 import pytest
-from fedoidc import MetadataStatement
-from fedoidc import MIN_SET
+from fedoidcmsg import MetadataStatement
+from fedoidcmsg import MIN_SET
 from fedoidcmsg import NoSuitableFederation
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.test_utils import create_compounded_metadata_statement
@@ -143,6 +143,7 @@ class TestProviderInfoRequest(object):
         self.service = build_services(
             {'FedProviderInfoDiscovery': {}, 'FedRegistrationRequest': {}},
             factory, _context, DB())
+        _context.service = self.service
 
     def test_request_info(self):
         _srv = self.service['provider_info']
@@ -175,7 +176,8 @@ class TestProviderInfoRequest(object):
 
     def test_parse_response_another_federation_priority(self):
         _srv = self.service['provider_info']
-        _srv.service_context.fo_priority = [SWAMID.iss, FEIDE.iss]
+        _srv.service_context.federation_entity.fo_priority = [SWAMID.iss,
+                                                              FEIDE.iss]
         req_resp = create_provider_info_response(FEIDE)
         resp = _srv.parse_response(req_resp, body_type='json')
         assert isinstance(resp, ProviderConfigurationResponse)
@@ -221,7 +223,8 @@ class TestProviderInfoRequest(object):
         )
 
         _srv = self.service['provider_info']
-        _srv.service_context.fo_priority = ['https://fo.surfnet.nl']
+        _srv.service_context.federation_entity.fo_priority = [
+            'https://fo.surfnet.nl']
         resp = _srv.parse_response(pc_resp.to_json(), body_type='json')
         assert isinstance(resp, ProviderConfigurationResponse)
         _srv.update_service_context(resp)
