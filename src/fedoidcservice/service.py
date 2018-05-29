@@ -41,7 +41,8 @@ class FedRegistrationRequest(Registration):
     def add_federation_context(self, request, service=None, receiver='',
                                **kwargs):
         _fe = self.service_context.federation_entity
-        return _fe.update_metadata_statement(request, receiver=receiver)
+        return _fe.update_metadata_statement(request, receiver=receiver,
+                                             context='registration')
 
     def post_parse_response(self, resp, **kwargs):
         """
