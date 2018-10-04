@@ -8,7 +8,7 @@ from fedoidcmsg import NoSuitableFederation
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.test_utils import create_compounded_metadata_statement
 from fedoidcmsg.test_utils import create_federation_entities
-from oidcmsg.key_jar import KeyJar
+from cryptojwt.key_jar import KeyJar
 from oidcmsg.oidc import ProviderConfigurationResponse
 from oidcservice import rndstr
 from oidcservice.service import build_services
