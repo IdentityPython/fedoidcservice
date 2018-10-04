@@ -5,7 +5,7 @@ from fedoidcmsg import MetadataStatement
 from fedoidcmsg.bundle import JWKSBundle
 from fedoidcmsg.operator import Operator
 from fedoidcmsg.test_utils import create_federation_entities, make_signing_sequence
-from oidcmsg.key_jar import KeyJar
+from cryptojwt.key_jar import KeyJar
 from oidcservice import rndstr
 from oidcservice.service import build_services
 from oidcservice.service_context import ServiceContext
